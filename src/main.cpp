@@ -15,8 +15,6 @@
 #include "pump.h"
 #include "state_machine.h"
 #include "communication.h"
-#include "tasks/ph_task.h"
-#include "tasks/ec_task.h"
 
 //=============================================================================
 // GLOBAL VARIABLES
@@ -76,8 +74,7 @@ void setup() {
   }
   
   // Optional: initialize task wrappers (stubs when disabled)
-  ph_task_init();
-  ec_task_init();
+ 
 
   Debug->println("CLI Commands:");
   Debug->println("  Calibration: s=show cal, r=reset cal, p=pH cal, e=EC cal, v=volume cal");

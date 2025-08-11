@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an iterative hydroponic system development project for ESP32-S3. We build the system part by part, expanding functionality gradually. The focus is on clear, maintainable code without overengineering.
 
-**Current Status**: Phase 2 manual pump control system implemented and operational.
+**Current Status**: Phase 3 hybrid communication system with WiFi/Telnet primary, Serial backup. Manual pump control operational.
 
 ## Development Philosophy & Code Style
 
@@ -32,28 +32,31 @@ pio device monitor --baud 115200          # Monitor only
 ## Code Architecture Rules
 
 ### File Organization
-- **main.cpp**: Arduino setup()/loop(), system orchestration, CLI handling
-- **sensors.h/.cpp**: All sensor reading logic, power management, filtering
-- **calibration.h/.cpp**: NVS storage, calibration algorithms
-- **pump.h/.cpp**: Peristaltic pump control system with PID and manual control
+- **main.cpp**: Arduino setup()/loop(), system orchestration, CLI handling, WiFi credentials
+- **sensors.h/.cpp**: All sensor reading logic, power management, filtering, DS18B20 temperature
+- **calibration.h/.cpp**: NVS storage, calibration algorithms with factory defaults
+- **pump.cpp**: Peristaltic pump control system with PID and manual control (no header found)
 - **state_machine.h/.cpp**: Hardware-level state management for system transitions
+- **communication.h/.cpp**: Hybrid WiFi/Serial manager, Telnet server, OTA updates
 
 ### Key Design Patterns
 1. **State-Based System**: Hardware-level state machine manages system transitions and safety
-2. **Power Management**: Sensors powered only during reading cycles
-3. **Non-blocking Operations**: Use timing checks, avoid delay() in main loop  
-4. **NVS Persistence**: Store calibration data in ESP32 NVS for reboot survival
-5. **Temperature Compensation**: Adjust pH/EC readings based on water temperature
-6. **Multi-sample Filtering**: Average multiple readings to reduce noise
-7. **Safety-First Pumps**: Multiple safety layers prevent over-dosing
+2. **Hybrid Communication**: WiFi/Telnet primary with Serial backup, automatic failover
+3. **Power Management**: Sensors powered only during reading cycles
+4. **Non-blocking Operations**: Use timing checks, avoid delay() in main loop  
+5. **NVS Persistence**: Store calibration data in ESP32 NVS for reboot survival
+6. **Temperature Compensation**: Adjust pH/EC readings based on water temperature via DS18B20
+7. **Multi-sample Filtering**: Average multiple readings to reduce noise
+8. **Safety-First Pumps**: Multiple safety layers prevent over-dosing
+9. **OTA Updates**: Over-the-air firmware updates via ArduinoOTA when WiFi connected
 
 ### Hardware Configuration (ESP32-S3)
 ```
-# Sensors
-pH Sensor:     GPIO5 (analog) + GPIO7 (power control)
-EC Sensor:     GPIO6 (analog) + GPIO8 (power control) 
-Temperature:   GPIO4 (DS18B20 1-Wire)
-Ultrasonic:    GPIO9 (trigger) + GPIO10 (echo)
+# Sensors (Phase 1)
+pH Sensor:     GPIO6 (analog) + GPIO7 (power control)
+EC Sensor:     GPIO5 (analog) + GPIO4 (power control) 
+Temperature:   GPIO10 (DS18B20 1-Wire)
+Ultrasonic:    GPIO8 (trigger) + GPIO9 (echo)
 
 # Pump System (Phase 2)
 pH Up Pump:    GPIO11 (PWM Channel 0)
@@ -61,12 +64,14 @@ pH Down Pump:  GPIO12 (PWM Channel 1)
 Nutrient A:    GPIO13 (PWM Channel 2)
 Nutrient B:    GPIO14 (PWM Channel 3)
 
-# Communication
-Serial:        115200 baud for CLI and debugging
+# Communication (Phase 3)
+Serial USB:    115200 baud (always available as backup)
+WiFi:          Primary interface with Telnet server (port 23)
+OTA Updates:   Port 3232, hostname "ESP32-Hydroponic"
 ```
 
 ### CLI Interface
-Runtime commands via serial (115200 baud):
+Runtime commands via hybrid interface (Serial USB backup + WiFi Telnet primary):
 
 **Calibration Commands:**
 - `s` - Show current calibration parameters
@@ -100,11 +105,19 @@ Runtime commands via serial (115200 baud):
 6. **Use consistent naming** - Follow sensor_*, calibration_*, pump_* function naming
 7. **Respect safety limits** - Pump system has multiple safety mechanisms
 
-### Dependencies (platformio.ini)
-```
-adafruit/Adafruit Unified Sensor@^1.1.4
-paulstoffregen/OneWire@^2.3.7  
-milesburton/DallasTemperature@^3.9.0
+### Dependencies & Build Configuration
+```ini
+# Platform & Board (platformio.ini)
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/51.03.05/platform-espressif32.zip
+board = esp32-s3-devkitc-1
+framework = arduino
+monitor_speed = 115200
+
+# Required Libraries
+lib_deps =
+  adafruit/Adafruit Unified Sensor@^1.1.4  # Base sensor abstraction
+  paulstoffregen/OneWire@^2.3.7            # DS18B20 communication protocol  
+  milesburton/DallasTemperature@^3.9.0     # DS18B20 temperature sensor
 ```
 
 ### Key Constants & Timing
@@ -132,6 +145,14 @@ milesburton/DallasTemperature@^3.9.0
 - **PWM control**: 8-bit resolution, 1kHz frequency, flow rates 10-90 ml/min
 - **Volume scaling**: All automatic doses proportional to reservoir volume
 
+### Communication System Architecture  
+- **Hybrid Interface**: WiFi Telnet primary, Serial USB always available as backup
+- **Auto-failover**: Seamless switching between communication methods based on WiFi status
+- **Multi-client Telnet**: Up to 3 concurrent Telnet connections supported (port 23)
+- **OTA Updates**: Over-the-air firmware updates when WiFi connected (ArduinoOTA)
+- **WiFi Credentials**: Hardcoded in main.cpp (WIFI_SSID, WIFI_PASSWORD constants)
+- **Connection Management**: Non-blocking WiFi connection with 10s timeout, 30s retry intervals
+
 This system is designed for real-world deployment in hydroponic monitoring, prioritizing reliability and maintainability over complexity.
 
 ## Development Best Practices
@@ -141,9 +162,12 @@ This system is designed for real-world deployment in hydroponic monitoring, prio
 - **Test thoroughly**: Always run `pio run` and `pio check` before deployment
 - **Monitor operation**: Use `q` command frequently to check pump status
 - **Emergency procedures**: Know how to use `x` and `z` commands to stop pumps
+- **WiFi Configuration**: Update WiFi credentials in main.cpp for target deployment network
+- **Communication Testing**: Verify both Serial and Telnet interfaces during development
 
-## Memories
+## Development Notes
 
-- `/clear` command added to project memory tracking
-- Use all necessary tools and agents for this task
-- Use all neccesary tools and agents, mcp servers 
+- **Missing pump.h**: pump.cpp exists but corresponding header file missing from include/ directory
+- **GPIO Pin Updates**: Actual GPIO assignments in source code differ from original documentation
+- **Test Structure**: test/ directory contains test_communication.cpp for communication system validation
+- **WiFi Credentials**: Currently hardcoded - consider environment variables for production deployment 
